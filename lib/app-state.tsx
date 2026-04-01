@@ -1,142 +1,220 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState } from 'react';
-import { seedItems, seedRecords } from './mock-data';
-import { Borrower, Item, RecordItem } from './types';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { initialStoredState } from './mock-data';
+import { ActiveLoan, BorrowDraft, HistoryEntry, Item, LoanLine, StoredState } from './types';
 
-type RentDraft = {
-  selectedIds: string[];
-  quantities: Record<string, number>;
-  borrowerMode: 'class' | 'custom';
-  grade: string;
-  classRoom: string;
-  customBorrower: string;
-};
+const STORAGE_KEY = 'gym-loan-app-v1';
 
 type AppState = {
+  hydrated: boolean;
   items: Item[];
-  records: RecordItem[];
-  adminPassword: string;
-  rentDraft: RentDraft;
-  toggleSelect: (id: string) => void;
-  setQuantity: (id: string, quantity: number) => void;
-  setBorrowerMode: (mode: 'class' | 'custom') => void;
-  setGrade: (value: string) => void;
-  setClassRoom: (value: string) => void;
-  setCustomBorrower: (value: string) => void;
-  completeRent: () => void;
-  completeReturn: (recordIds: string[]) => void;
+  activeLoans: ActiveLoan[];
+  history: HistoryEntry[];
+  adminPin: string;
+  draft: BorrowDraft;
+  getRemainingCount: (itemId: string) => number;
+  toggleDraftItem: (itemId: string) => void;
+  setDraftQuantity: (itemId: string, value: number) => void;
+  setDraftTab: (tab: 'class' | 'custom') => void;
+  setDraftGrade: (grade: string) => void;
+  setDraftClass: (classRoom: string) => void;
+  setDraftCustomName: (name: string) => void;
+  submitBorrow: () => void;
+  submitReturn: (loanIds: string[]) => void;
   addItem: (payload: { name: string; total: number; quantitySelectable: boolean }) => void;
-  removeItem: (id: string) => void;
-  verifyAdmin: (password: string) => boolean;
-  changePassword: (nextPassword: string) => void;
+  deleteItem: (itemId: string) => void;
+  verifyAdminPin: (pin: string) => boolean;
+  updateAdminPin: (pin: string) => void;
 };
 
-const Ctx = createContext<AppState | null>(null);
+const AppContext = createContext<AppState | null>(null);
 
-function buildBorrowerText(draft: RentDraft): string {
-  if (draft.borrowerMode === 'class') {
-    return `${draft.grade}학년 ${draft.classRoom}반`;
-  }
-  return draft.customBorrower.trim() || '직접 입력 사용자';
+const initialDraft: BorrowDraft = {
+  selectedItemIds: [],
+  quantities: {},
+  borrowerTab: 'class',
+  grade: '4',
+  classRoom: '3',
+  customName: ''
+};
+
+function formatNow() {
+  return new Date().toLocaleString('ko-KR', {
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  });
+}
+
+function buildBorrowerLabel(draft: BorrowDraft) {
+  return draft.borrowerTab === 'class'
+    ? `${draft.grade}학년 ${draft.classRoom}반`
+    : draft.customName.trim() || '직접 입력';
 }
 
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [items, setItems] = useState<Item[]>(seedItems);
-  const [records, setRecords] = useState<RecordItem[]>(seedRecords);
-  const [adminPassword, setAdminPassword] = useState('0000');
-  const [rentDraft, setRentDraft] = useState<RentDraft>({
-    selectedIds: [],
-    quantities: {},
-    borrowerMode: 'class',
-    grade: '4',
-    classRoom: '3',
-    customBorrower: ''
-  });
+  const [hydrated, setHydrated] = useState(false);
+  const [items, setItems] = useState<Item[]>(initialStoredState.items);
+  const [activeLoans, setActiveLoans] = useState<ActiveLoan[]>(initialStoredState.activeLoans);
+  const [history, setHistory] = useState<HistoryEntry[]>(initialStoredState.history);
+  const [adminPin, setAdminPin] = useState(initialStoredState.adminPin);
+  const [draft, setDraft] = useState<BorrowDraft>(initialDraft);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(initialStoredState));
+      } else {
+        const parsed = JSON.parse(raw) as Partial<StoredState>;
+        setItems(parsed.items?.length ? parsed.items : initialStoredState.items);
+        setActiveLoans(parsed.activeLoans ?? []);
+        setHistory(parsed.history ?? []);
+        setAdminPin(parsed.adminPin || initialStoredState.adminPin);
+      }
+    } catch {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(initialStoredState));
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    const nextStored: StoredState = { items, activeLoans, history, adminPin };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextStored));
+  }, [hydrated, items, activeLoans, history, adminPin]);
+
+  const remainingMap = useMemo(() => {
+    const map = new Map<string, number>();
+    items.forEach((item) => map.set(item.id, item.total));
+    activeLoans.forEach((loan) => {
+      loan.lines.forEach((line) => {
+        const current = map.get(line.itemId) ?? 0;
+        map.set(line.itemId, Math.max(0, current - line.quantity));
+      });
+    });
+    return map;
+  }, [items, activeLoans]);
 
   const value = useMemo<AppState>(
     () => ({
+      hydrated,
       items,
-      records,
-      adminPassword,
-      rentDraft,
-      toggleSelect: (id) => {
-        setRentDraft((prev) => ({
+      activeLoans,
+      history,
+      adminPin,
+      draft,
+      getRemainingCount: (itemId) => remainingMap.get(itemId) ?? 0,
+      toggleDraftItem: (itemId) => {
+        setDraft((prev) => ({
           ...prev,
-          selectedIds: prev.selectedIds.includes(id)
-            ? prev.selectedIds.filter((v) => v !== id)
-            : [...prev.selectedIds, id]
+          selectedItemIds: prev.selectedItemIds.includes(itemId)
+            ? prev.selectedItemIds.filter((id) => id !== itemId)
+            : [...prev.selectedItemIds, itemId]
         }));
       },
-      setQuantity: (id, quantity) => {
-        setRentDraft((prev) => ({ ...prev, quantities: { ...prev.quantities, [id]: Math.max(0, quantity) } }));
+      setDraftQuantity: (itemId, value) => {
+        const max = remainingMap.get(itemId) ?? 1;
+        const bounded = Math.max(1, Math.min(max, value));
+        setDraft((prev) => ({ ...prev, quantities: { ...prev.quantities, [itemId]: bounded } }));
       },
-      setBorrowerMode: (mode) => setRentDraft((prev) => ({ ...prev, borrowerMode: mode })),
-      setGrade: (value) => setRentDraft((prev) => ({ ...prev, grade: value })),
-      setClassRoom: (value) => setRentDraft((prev) => ({ ...prev, classRoom: value })),
-      setCustomBorrower: (value) => setRentDraft((prev) => ({ ...prev, customBorrower: value })),
-      completeRent: () => {
-        const borrowerText = buildBorrowerText(rentDraft);
-        const now = '데모 시각';
-        const selected = items.filter((item) => rentDraft.selectedIds.includes(item.id));
+      setDraftTab: (tab) => setDraft((prev) => ({ ...prev, borrowerTab: tab })),
+      setDraftGrade: (grade) => setDraft((prev) => ({ ...prev, grade })),
+      setDraftClass: (classRoom) => setDraft((prev) => ({ ...prev, classRoom })),
+      setDraftCustomName: (name) => setDraft((prev) => ({ ...prev, customName: name })),
+      submitBorrow: () => {
+        if (!draft.selectedItemIds.length) return;
 
-        setItems((prev) =>
-          prev.map((item) => {
-            const selectedItem = selected.find((s) => s.id === item.id);
-            if (!selectedItem) return item;
-            const q = rentDraft.quantities[item.id] || 1;
-            return { ...item, remaining: Math.max(0, item.remaining - q) };
+        const borrowerLabel = buildBorrowerLabel(draft);
+        const borrowedAt = formatNow();
+        const lines: LoanLine[] = draft.selectedItemIds
+          .map((itemId) => {
+            const item = items.find((value) => value.id === itemId);
+            if (!item) return null;
+            return {
+              itemId,
+              itemName: item.name,
+              icon: item.icon,
+              quantity: item.quantitySelectable ? draft.quantities[itemId] ?? 1 : 1
+            };
           })
-        );
+          .filter((line): line is LoanLine => !!line && line.quantity > 0);
 
-        setRecords((prev) => [
-          ...selected.map((item) => ({
-            id: `${Date.now()}-${item.id}`,
-            itemId: item.id,
-            itemName: item.name,
-            icon: item.icon,
-            quantity: rentDraft.quantities[item.id] || 1,
-            borrowerText,
-            rentedAt: now,
-            status: 'borrowed' as const
+        if (!lines.length) return;
+
+        const loanId = crypto.randomUUID();
+        const nextLoan: ActiveLoan = {
+          id: loanId,
+          borrowerType: draft.borrowerTab,
+          borrowerLabel,
+          borrowedAt,
+          lines
+        };
+
+        setActiveLoans((prev) => [nextLoan, ...prev]);
+        setHistory((prev) => [
+          ...lines.map((line) => ({
+            id: crypto.randomUUID(),
+            loanId,
+            status: 'borrowed' as const,
+            borrowedAt,
+            borrowerLabel,
+            line
           })),
           ...prev
         ]);
-
-        setRentDraft((prev) => ({ ...prev, selectedIds: [], quantities: {} }));
+        setDraft(initialDraft);
       },
-      completeReturn: (recordIds) => {
-        setRecords((prev) =>
-          prev.map((r) => {
-            if (!recordIds.includes(r.id)) return r;
-            return { ...r, status: 'returned' as const };
-          })
-        );
+      submitReturn: (loanIds) => {
+        if (!loanIds.length) return;
+        const returning = activeLoans.filter((loan) => loanIds.includes(loan.id));
+        const returnedAt = formatNow();
 
-        setItems((prev) =>
-          prev.map((item) => {
-            const returned = records.filter((r) => recordIds.includes(r.id) && r.itemId === item.id);
-            const addBack = returned.reduce((acc, r) => acc + r.quantity, 0);
-            return { ...item, remaining: Math.min(item.total, item.remaining + addBack) };
-          })
-        );
+        setActiveLoans((prev) => prev.filter((loan) => !loanIds.includes(loan.id)));
+        setHistory((prev) => [
+          ...returning.flatMap((loan) =>
+            loan.lines.map((line) => ({
+              id: crypto.randomUUID(),
+              loanId: loan.id,
+              status: 'returned' as const,
+              borrowedAt: loan.borrowedAt,
+              returnedAt,
+              borrowerLabel: loan.borrowerLabel,
+              line
+            }))
+          ),
+          ...prev
+        ]);
       },
       addItem: ({ name, total, quantitySelectable }) => {
-        const id = `${Date.now()}`;
-        setItems((prev) => [...prev, { id, name, icon: '📦', total, remaining: total, quantitySelectable }]);
+        const nextItem: Item = {
+          id: crypto.randomUUID(),
+          name,
+          icon: '📦',
+          total: Math.max(1, total),
+          quantitySelectable
+        };
+        setItems((prev) => [...prev, nextItem]);
       },
-      removeItem: (id) => setItems((prev) => prev.filter((item) => item.id !== id)),
-      verifyAdmin: (password) => password === adminPassword,
-      changePassword: (nextPassword) => setAdminPassword(nextPassword)
+      deleteItem: (itemId) => {
+        setItems((prev) => prev.filter((item) => item.id !== itemId));
+      },
+      verifyAdminPin: (pin) => pin === adminPin,
+      updateAdminPin: (pin) => {
+        if (pin.trim()) setAdminPin(pin.trim());
+      }
     }),
-    [items, records, adminPassword, rentDraft]
+    [hydrated, items, activeLoans, history, adminPin, draft, remainingMap]
   );
 
-  return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+  return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }
 
 export function useAppState() {
-  const ctx = useContext(Ctx);
+  const ctx = useContext(AppContext);
   if (!ctx) throw new Error('AppProvider is required');
   return ctx;
 }
