@@ -10,53 +10,36 @@ export default function ReturnPage() {
   const { hydrated, activeLoans, submitReturn } = useAppState();
   const [selected, setSelected] = useState<string[]>([]);
 
-  if (!hydrated) {
-    return (
-      <AppShell>
-        <TopBar title="물품 반납하기" backHref="/" />
-        <LoadingBlock />
-      </AppShell>
-    );
-  }
+  if (!hydrated) return <AppShell><TopBar title="물품 반납하기" backHref="/" /><LoadingBlock /></AppShell>;
 
-  const toggle = (loanId: string) => {
-    setSelected((prev) => (prev.includes(loanId) ? prev.filter((id) => id !== loanId) : [...prev, loanId]));
-  };
+  const toggle = (loanId: string) => setSelected((prev) => (prev.includes(loanId) ? prev.filter((id) => id !== loanId) : [...prev, loanId]));
 
   return (
     <AppShell>
       <TopBar title="물품 반납하기" backHref="/" />
-      <p className="px-5 pb-5 pt-7 text-[22px] text-slate-500">현재 대여 중인 항목입니다. 반납할 항목을 선택하세요.</p>
+      <p className="mb-4 break-keep text-sm text-slate-500 sm:text-base">현재 대여 중인 항목입니다. 반납할 항목을 선택하세요.</p>
 
-      <section className="grid grid-cols-2 gap-3 px-4 pb-24">
-        {activeLoans.map((loan) =>
-          loan.lines.map((line) => {
-            const checked = selected.includes(loan.id);
-            return (
-              <button key={`${loan.id}-${line.itemId}`} onClick={() => toggle(loan.id)} className="rounded-3xl border border-slate-200 bg-white p-3 text-left">
-                <div className="flex gap-3">
-                  <span className={`mt-8 h-8 w-8 rounded-full border ${checked ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300'}`} />
-                  <span className="text-7xl">{line.icon}</span>
-                  <div>
-                    <p className="text-[20px] font-extrabold">{line.itemName} <span className="text-rose-500">{line.quantity}개</span></p>
-                    <p className="text-[18px] text-slate-500">{loan.borrowerLabel}</p>
-                    <p className="text-[18px] text-slate-500">{loan.borrowedAt}</p>
-                  </div>
+      <section className="grid gap-3 pb-24 md:grid-cols-2">
+        {activeLoans.length === 0 ? <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-500">현재 대여 중인 항목이 없습니다.</div> : null}
+        {activeLoans.map((loan) => {
+          const checked = selected.includes(loan.id);
+          const lineSummary = loan.lines.map((line) => `${line.itemName} ${line.quantity}개`).join(', ');
+          return (
+            <button key={loan.id} onClick={() => toggle(loan.id)} className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left">
+              <div className="flex items-start gap-3">
+                <span className={`mt-1 inline-block h-5 w-5 shrink-0 rounded-full border ${checked ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300'}`} />
+                <div className="min-w-0">
+                  <p className="break-keep text-base font-bold text-slate-900">{lineSummary}</p>
+                  <p className="mt-1 text-sm text-slate-600">대여자: {loan.borrowerLabel}</p>
+                  <p className="text-sm text-slate-500">대여일시: {loan.borrowedAt}</p>
                 </div>
-              </button>
-            );
-          })
-        )}
+              </div>
+            </button>
+          );
+        })}
       </section>
 
-      <BottomCTA
-        label={`선택한 ${selected.length}건 반납 완료`}
-        disabled={!selected.length}
-        onClick={() => {
-          submitReturn(selected);
-          router.push('/admin/history');
-        }}
-      />
+      <BottomCTA label={`선택한 ${selected.length}건 반납 완료`} disabled={!selected.length} onClick={() => { submitReturn(selected); router.push('/admin/history'); }} />
     </AppShell>
   );
 }
