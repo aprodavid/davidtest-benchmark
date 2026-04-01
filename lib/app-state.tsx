@@ -70,6 +70,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(initialStoredState));
       } else {
         const parsed = JSON.parse(raw) as Partial<StoredState>;
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setItems(parsed.items?.length ? parsed.items : initialStoredState.items);
         setActiveLoans(parsed.activeLoans ?? []);
         setHistory(parsed.history ?? []);
