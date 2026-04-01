@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-canvas text-slate-800;
+}
+
+input, select {
+  @apply outline-none;
+}
